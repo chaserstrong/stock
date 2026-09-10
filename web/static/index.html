@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博主观点与准确率</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont,
+      "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+    background: #f5f7fa; color: #2c3e50; font-size: 14px;
+  }
+  header {
+    background: linear-gradient(135deg, #2c3e50 0%, #4a6079 100%);
+    color: #fff; padding: 20px 32px;
+  }
+  header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  header p { margin: 6px 0 0; font-size: 13px; opacity: 0.8; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  .filters {
+    background: #fff; padding: 16px 20px; border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 16px;
+    display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: #6b7280; font-weight: 500; }
+  .field input, .field select {
+    padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px;
+    font-size: 13px; min-width: 140px; background: #fff;
+  }
+  .field input:focus, .field select:focus {
+    outline: none; border-color: #4a6079; box-shadow: 0 0 0 2px rgba(74,96,121,0.15);
+  }
+  .actions { display: flex; gap: 8px; margin-left: auto; }
+  .btn {
+    padding: 7px 18px; border: none; border-radius: 4px;
+    cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;
+  }
+  .btn-primary { background: #4a6079; color: #fff; }
+  .btn-primary:hover { background: #2c3e50; }
+  .btn-secondary { background: #e5e7eb; color: #374151; }
+  .btn-secondary:hover { background: #d1d5db; }
+  .stats {
+    display: flex; gap: 16px; margin-bottom: 12px;
+    color: #6b7280; font-size: 13px;
+  }
+  .stats b { color: #2c3e50; }
+  .table-wrap {
+    background: #fff; border-radius: 8px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    background: #f3f4f6; padding: 10px 12px; text-align: left;
+    font-weight: 600; color: #374151; font-size: 12px;
+    border-bottom: 1px solid #e5e7eb; white-space: nowrap;
+    position: sticky; top: 0;
+  }
+  tbody td {
+    padding: 10px 12px; border-bottom: 1px solid #f3f4f6;
+    vertical-align: top; font-size: 13px;
+  }
+  tbody tr:hover { background: #fafbfc; }
+  .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    font-size: 11px; margin: 2px 2px; background: #e0f2fe; color: #075985;
+  }
+  .tag.bull { background: #dcfce7; color: #166534; }
+  .tag.bear { background: #fee2e2; color: #991b1b; }
+  .tag.neutral { background: #f3f4f6; color: #4b5563; }
+  .view { font-weight: 600; }
+  .view.bull { color: #16a34a; }
+  .view.bear { color: #dc2626; }
+  .view.neutral { color: #6b7280; }
+  .muted { color: #9ca3af; font-style: italic; }
+  .empty { text-align: center; padding: 40px; color: #9ca3af; }
+  .pagination {
+    display: flex; justify-content: center; align-items: center;
+    gap: 8px; margin-top: 16px;
+  }
+  .pagination button {
+    padding: 6px 14px; border: 1px solid #d1d5db; background: #fff;
+    border-radius: 4px; cursor: pointer; font-size: 13px;
+  }
+  .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .pagination .info { color: #6b7280; font-size: 13px; }
+  .expect-list { margin: 0; padding-left: 16px; }
+  .expect-list li { margin-bottom: 4px; }
+  .risk { color: #b45309; font-size: 12px; max-width: 280px; }
+  .title-cell a {
+    color: #2563eb; text-decoration: none;
+  }
+  .title-cell a:hover { text-decoration: underline; }
+  .summary {
+    max-width: 320px; color: #4b5563; font-size: 12px;
+    line-height: 1.5; max-height: 80px; overflow: hidden;
+    position: relative;
+  }
+  .summary.expand { max-height: none; }
+  .summary-toggle {
+    color: #2563eb; cursor: pointer; font-size: 11px; margin-left: 4px;
+  }
+  .accuracy-cell { text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>博主观点与预期</h1>
+  <p>展示 content_analysis 表中每位博主的市场观点、后市预期与提及板块，准确率列待 prediction_evaluation 数据接入后回填</p>
+</header>
+
+<div class="container">
+  <div class="filters">
+    <div class="field">
+      <label>开始日期</label>
+      <input type="date" id="start_date">
+    </div>
+    <div class="field">
+      <label>结束日期</label>
+      <input type="date" id="end_date">
+    </div>
+    <div class="field">
+      <label>板块标签</label>
+      <select id="sector">
+        <option value="">全部板块</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>博主</label>
+      <select id="author_id">
+        <option value="">全部博主</option>
+      </select>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" id="search_btn">搜索</button>
+      <button class="btn btn-secondary" id="reset_btn">重置</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <span>共 <b id="total">0</b> 条</span>
+    <span>第 <b id="page">1</b> / <b id="total_pages">1</b> 页</span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="min-width: 110px;">博主</th>
+          <th style="min-width: 130px;">发布时间</th>
+          <th style="min-width: 220px;">标题</th>
+          <th style="min-width: 70px;">市场观点</th>
+          <th style="min-width: 220px;">关键要点</th>
+          <th style="min-width: 240px;">后市预期</th>
+          <th style="min-width: 180px;">提及板块</th>
+          <th style="min-width: 200px;">风险提示</th>
+          <th style="min-width: 80px; text-align: center;">准确率</th>
+        </tr>
+      </thead>
+      <tbody id="list">
+        <tr><td colspan="9" class="empty">加载中...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    <button id="prev_btn">上一页</button>
+    <span class="info" id="page_info">第 1 页</span>
+    <button id="next_btn">下一页</button>
+  </div>
+</div>
+
+<script>
+const API = {
+  sectors: '/api/sectors',
+  authors: '/api/authors',
+  analyses: '/api/analyses',
+};
+
+const state = {
+  page: 1,
+  pageSize: 50,
+  total: 0,
+  items: [],
+};
+
+const $ = (id) => document.getElementById(id);
+
+async function fetchJSON(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
+
+async function loadFilters() {
+  try {
+    const [sectorsResp, authorsResp] = await Promise.all([
+      fetchJSON(API.sectors),
+      fetchJSON(API.authors),
+    ]);
+    const sectorSel = $('sector');
+    (sectorsResp.sectors || []).forEach((s) => {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      sectorSel.appendChild(opt);
+    });
+    const authorSel = $('author_id');
+    (authorsResp.authors || []).forEach((a) => {
+      const opt = document.createElement('option');
+      opt.value = a.author_id;
+      opt.textContent = `${a.author_name} (${a.platform_name || ''})`;
+      authorSel.appendChild(opt);
+    });
+  } catch (err) {
+    console.error('加载筛选项失败:', err);
+  }
+}
+
+function buildQuery() {
+  const params = new URLSearchParams();
+  const startDate = $('start_date').value;
+  const endDate = $('end_date').value;
+  const sector = $('sector').value;
+  const authorId = $('author_id').value;
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  if (sector) params.append('sector', sector);
+  if (authorId) params.append('author_id', authorId);
+  params.append('page', state.page);
+  params.append('page_size', state.pageSize);
+  return params.toString();
+}
+
+async function loadAnalyses() {
+  const listEl = $('list');
+  listEl.innerHTML = '<tr><td colspan="9" class="empty">加载中...</td></tr>';
+  try {
+    const data = await fetchJSON(`${API.analyses}?${buildQuery()}`);
+    state.total = data.total || 0;
+    state.items = data.items || [];
+    render();
+  } catch (err) {
+    listEl.innerHTML = `<tr><td colspan="9" class="empty">加载失败：${err.message}</td></tr>`;
+  }
+}
+
+function viewClass(v) {
+  if (v === '看多') return 'bull';
+  if (v === '看空') return 'bear';
+  return 'neutral';
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderTags(arr, withSentiment = false) {
+  if (!Array.isArray(arr) || arr.length === 0) {
+    return '<span class="muted">—</span>';
+  }
+  return arr.map((x) => {
+    const text = typeof x === 'string' ? x : (x && x.name) || JSON.stringify(x);
+    const cls = withSentiment && x && x.sentiment ? ` ${x.sentiment}` : '';
+    return `<span class="tag${cls}">${escapeHtml(text)}</span>`;
+  }).join('');
+}
+
+function renderExpectations(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) {
+    return '<span class="muted">—</span>';
+  }
+  const items = arr.map((e) => {
+    const parts = [];
+    if (e['标的']) parts.push(`<b>${escapeHtml(e['标的'])}</b>`);
+    if (e['方向']) parts.push(`<span class="view ${viewClass(e['方向'])}">${escapeHtml(e['方向'])}</span>`);
+    if (e['时间维度']) parts.push(escapeHtml(e['时间维度']));
+    if (e['具体描述']) parts.push(escapeHtml(e['具体描述']));
+    return `<li>${parts.join(' · ')}</li>`;
+  }).join('');
+  return `<ol class="expect-list">${items}</ol>`;
+}
+
+function renderRow(item) {
+  const view = item.market_view;
+  const viewClassStr = view ? `view ${viewClass(view)}` : 'muted';
+  const sectors = renderTags(item.mentioned_sectors);
+  const keyPoints = Array.isArray(item.key_points) && item.key_points.length
+    ? `<ul class="expect-list">${item.key_points.map((k) => `<li>${escapeHtml(k)}</li>`).join('')}</ul>`
+    : '<span class="muted">—</span>';
+  const accuracy = item.accuracy == null
+    ? '<span class="muted">—</span>'
+    : `${(item.accuracy * 100).toFixed(1)}%`;
+
+  const titleHtml = item.title
+    ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>`
+    : '<span class="muted">—</span>';
+
+  return `
+    <tr>
+      <td>
+        <div>${escapeHtml(item.author_name)}</div>
+        <div class="muted" style="font-size:11px;">${escapeHtml(item.platform || '')}</div>
+      </td>
+      <td>${escapeHtml(item.publish_time) || '<span class="muted">—</span>'}</td>
+      <td class="title-cell">${titleHtml}</td>
+      <td><span class="${viewClassStr}">${escapeHtml(view || '—')}</span></td>
+      <td>${keyPoints}</td>
+      <td>${renderExpectations(item.market_expectations)}</td>
+      <td>${sectors}</td>
+      <td class="risk">${escapeHtml(item.risk_points) || '<span class="muted">—</span>'}</td>
+      <td class="accuracy-cell">${accuracy}</td>
+    </tr>
+  `;
+}
+
+function render() {
+  const listEl = $('list');
+  if (state.items.length === 0) {
+    listEl.innerHTML = '<tr><td colspan="9" class="empty">暂无数据</td></tr>';
+  } else {
+    listEl.innerHTML = state.items.map(renderRow).join('');
+  }
+
+  const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+  $('total').textContent = state.total;
+  $('page').textContent = state.page;
+  $('total_pages').textContent = totalPages;
+  $('page_info').textContent = `第 ${state.page} 页`;
+  $('prev_btn').disabled = state.page <= 1;
+  $('next_btn').disabled = state.page >= totalPages;
+}
+
+function doSearch() {
+  state.page = 1;
+  loadAnalyses();
+}
+
+function resetFilters() {
+  $('start_date').value = '';
+  $('end_date').value = '';
+  $('sector').value = '';
+  $('author_id').value = '';
+  state.page = 1;
+  loadAnalyses();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadFilters();
+  loadAnalyses();
+  $('search_btn').addEventListener('click', doSearch);
+  $('reset_btn').addEventListener('click', resetFilters);
+  $('prev_btn').addEventListener('click', () => {
+    if (state.page > 1) { state.page--; loadAnalyses(); }
+  });
+  $('next_btn').addEventListener('click', () => {
+    const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+    if (state.page < totalPages) { state.page++; loadAnalyses(); }
+  });
+  // 回车触发搜索
+  ['start_date', 'end_date', 'sector', 'author_id'].forEach((id) => {
+    $(id).addEventListener('change', doSearch);
+    $(id).addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doSearch();
+    });
+  });
+});
+</script>
+</body>
+</html>
