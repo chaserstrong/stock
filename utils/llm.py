@@ -60,7 +60,7 @@ def summarize_video(title: str, content: str, url: str, author: str, date_str: s
     """
     # 截断正文避免超长，抖音详情页通常 5K-50K 字符
     truncated = content[:800000] if content else ""
-    print("正文内容:", truncated)
+    # print("正文内容:", truncated)
     user_prompt = (
         f"视频标题：{title}\n"
         f"作者：{author}\n"

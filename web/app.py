@@ -13,6 +13,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +26,9 @@ sys.path.insert(0, _PROJECT_ROOT)
 from dotenv import load_dotenv  # noqa: E402
 import pymysql  # noqa: E402
 
+from utils.douyin import fetch_user_info, find_sec_uid  # noqa: E402
+from utils.db import upsert_author  # noqa: E402
+
 load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 
 WEB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -32,6 +36,9 @@ STATIC_DIR = os.path.join(WEB_DIR, "static")
 
 # market_view 枚举 → 中文显示
 MARKET_VIEW_TEXT = {1: "看多", 0: "中性", -1: "看空"}
+
+# 抖音主页 URL 形如 https://www.douyin.com/user/{sec_uid}
+_SEC_UID_RE = re.compile(r"/user/([A-Za-z0-9_\-]{20,})")
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
@@ -104,6 +111,39 @@ def fetch_authors() -> list[dict]:
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             cur.execute(sql)
             return list(cur.fetchall())
+
+
+def add_author_by_input(raw_input: str) -> dict:
+    """通过主页链接或昵称定位博主，拉取资料并写入 author 表。
+
+    优先从输入中提取 sec_uid（主页 URL 形态）；提取不到则按昵称
+    走 find_sec_uid（站内搜索 + iesdouyin 昵称校验）。
+    拿到 sec_uid 后调 fetch_user_info 取昵称/粉丝/简介，再 upsert_author 入库。
+    """
+    text = (raw_input or "").strip()
+    if not text:
+        raise ValueError("请输入博主主页链接或昵称")
+
+    m = _SEC_UID_RE.search(text)
+    sec_uid = m.group(1) if m else None
+    if not sec_uid:
+        sec_uid = find_sec_uid(text)
+    if not sec_uid:
+        raise ValueError("未能定位到博主主页，请确认链接或昵称")
+
+    info = fetch_user_info(sec_uid)
+    nickname = info.get("nickname") or text
+    author_id = upsert_author(sec_uid, nickname, info)
+    return {
+        "author_id": author_id,
+        "author_name": nickname,
+        "platform_uid": sec_uid,
+        "homepage_url": f"https://www.douyin.com/user/{sec_uid}",
+        "follower_count": info.get("follower_count"),
+        "description": info.get("signature") or info.get("description"),
+        "aweme_count": info.get("aweme_count"),
+        "short_id": info.get("short_id"),
+    }
 
 
 def fetch_analyses(
@@ -294,6 +334,33 @@ class Handler(BaseHTTPRequestHandler):
                     page_size=page_size,
                 )
                 self._send_json(data)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, status=500)
+            return
+
+        self._send_text(404, "Not Found")
+
+    def do_POST(self):  # noqa: N802
+        parts = urlsplit(self.path)
+        path = parts.path
+
+        if path == "/api/authors":
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            body = self.rfile.read(length).decode("utf-8") if length else "{}"
+            try:
+                data = json.loads(body) if body else {}
+            except json.JSONDecodeError:
+                self._send_json({"error": "请求体不是合法 JSON"}, status=400)
+                return
+            raw = data.get("input") or data.get("url") or data.get("name")
+            if not raw:
+                self._send_json({"error": "缺少 input 参数"}, status=400)
+                return
+            try:
+                result = add_author_by_input(raw)
+                self._send_json(result)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=500)
             return

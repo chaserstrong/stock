@@ -102,6 +102,37 @@
     color: #2563eb; cursor: pointer; font-size: 11px; margin-left: 4px;
   }
   .accuracy-cell { text-align: center; }
+  .modal-mask {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    z-index: 100; align-items: center; justify-content: center;
+  }
+  .modal-mask.show { display: flex; }
+  .modal {
+    background: #fff; border-radius: 8px; width: 460px; max-width: 92vw;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.2); overflow: hidden;
+  }
+  .modal-head {
+    padding: 14px 20px; background: #4a6079; color: #fff;
+    font-weight: 600; font-size: 15px;
+  }
+  .modal-body { padding: 20px; }
+  .modal-body label { font-size: 12px; color: #6b7280; font-weight: 500; }
+  .modal-body input {
+    width: 100%; margin-top: 6px; padding: 8px 10px; border: 1px solid #d1d5db;
+    border-radius: 4px; font-size: 13px; box-sizing: border-box;
+  }
+  .modal-body input:focus {
+    outline: none; border-color: #4a6079; box-shadow: 0 0 0 2px rgba(74,96,121,0.15);
+  }
+  .modal-hint { margin: 8px 0 0; font-size: 12px; color: #9ca3af; }
+  .modal-msg { margin: 10px 0 0; font-size: 13px; min-height: 18px; }
+  .modal-msg.ok { color: #16a34a; }
+  .modal-msg.err { color: #dc2626; }
+  .modal-foot {
+    padding: 12px 20px; background: #f9fafb; display: flex;
+    justify-content: flex-end; gap: 8px;
+  }
+  .modal-foot .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -135,6 +166,7 @@
     <div class="actions">
       <button class="btn btn-primary" id="search_btn">搜索</button>
       <button class="btn btn-secondary" id="reset_btn">重置</button>
+      <button class="btn btn-primary" id="add_author_btn">录入博主</button>
     </div>
   </div>
 
@@ -171,10 +203,27 @@
   </div>
 </div>
 
+<div class="modal-mask" id="author_modal">
+  <div class="modal">
+    <div class="modal-head">录入博主</div>
+    <div class="modal-body">
+      <label for="author_input">博主主页链接或昵称</label>
+      <input type="text" id="author_input" placeholder="https://www.douyin.com/user/MS4wLjABAAAA... 或 昵称">
+      <p class="modal-hint">输入主页链接可直接定位；输入昵称将走抖音站内搜索并校验昵称。</p>
+      <p class="modal-msg" id="author_msg"></p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-secondary" id="author_cancel">取消</button>
+      <button class="btn btn-primary" id="author_submit">提交</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = {
   sectors: '/api/sectors',
   authors: '/api/authors',
+  authorsCreate: '/api/authors',
   analyses: '/api/analyses',
 };
 
@@ -371,6 +420,70 @@ document.addEventListener('DOMContentLoaded', () => {
     $(id).addEventListener('keydown', (e) => {
       if (e.key === 'Enter') doSearch();
     });
+  });
+
+  // 录入博主模态
+  function openAuthorModal() {
+    $('author_input').value = '';
+    setAuthorMsg('', '');
+    $('author_submit').disabled = false;
+    $('author_modal').classList.add('show');
+    $('author_input').focus();
+  }
+  function closeAuthorModal() {
+    $('author_modal').classList.remove('show');
+  }
+  function setAuthorMsg(text, kind) {
+    const el = $('author_msg');
+    el.textContent = text;
+    el.className = 'modal-msg' + (kind ? ' ' + kind : '');
+  }
+  async function submitAuthor() {
+    const value = $('author_input').value.trim();
+    if (!value) {
+      setAuthorMsg('请输入主页链接或昵称', 'err');
+      return;
+    }
+    const btn = $('author_submit');
+    btn.disabled = true;
+    setAuthorMsg('正在定位并写入...', '');
+    try {
+      const resp = await fetch(API.authorsCreate, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: value }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setAuthorMsg(data.error || `请求失败 (${resp.status})`, 'err');
+        btn.disabled = false;
+        return;
+      }
+      const name = data.author_name ? data.author_name : '博主';
+      setAuthorMsg(`已写入：${name}（author_id=${data.author_id}）`, 'ok');
+      // 刷新博主下拉框
+      await loadFilters();
+      // 选中新录入的博主
+      const sel = $('author_id');
+      const opt = Array.from(sel.options).find((o) => o.value === String(data.author_id));
+      if (opt) { sel.value = opt.value; }
+      doSearch();
+    } catch (err) {
+      setAuthorMsg('网络错误：' + err.message, 'err');
+      btn.disabled = false;
+    }
+  }
+  $('add_author_btn').addEventListener('click', openAuthorModal);
+  $('author_cancel').addEventListener('click', closeAuthorModal);
+  $('author_submit').addEventListener('click', submitAuthor);
+  $('author_input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAuthor();
+  });
+  $('author_modal').addEventListener('click', (e) => {
+    if (e.target.id === 'author_modal') closeAuthorModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAuthorModal();
   });
 });
 </script>

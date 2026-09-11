@@ -65,7 +65,141 @@ def date_from_aweme_id(aweme_id: str) -> datetime.datetime:
 
 
 def find_sec_uid(creator: str) -> str | None:
-    """通过 Tavily 搜索博主抖音主页，取出 sec_uid。"""
+    """定位博主 sec_uid，均用 iesdouyin 接口校验昵称精准匹配。
+
+    依次尝试：抖音站内搜索 API → 抖音搜索页渲染 → Tavily 第三方搜索。
+    只有昵称精确匹配目标博主的候选才会返回；全部失败返回 None。
+    """
+    sec_uid = _find_sec_uid_via_douyin(creator)
+    if sec_uid:
+        return sec_uid
+    print("  抖音站内搜索未命中，回退 Tavily 第三方搜索...")
+    return _find_sec_uid_via_tavily(creator)
+
+
+def _verify_sec_uid(sec_uid: str, creator: str) -> bool:
+    """用 iesdouyin 免签名接口校验昵称是否精确匹配目标博主。"""
+    info = fetch_user_info(sec_uid)
+    return (info.get("nickname") or "").strip() == creator
+
+
+def _pick_sec_uid_by_nickname(sec_uids: list, creator: str) -> str | None:
+    """从候选 sec_uid 列表里挑出昵称精确匹配目标的第一个。"""
+    seen = set()
+    for sec_uid in sec_uids:
+        if not sec_uid or sec_uid in seen:
+            continue
+        seen.add(sec_uid)
+        if _verify_sec_uid(sec_uid, creator):
+            return sec_uid
+    return None
+
+
+def _find_sec_uid_via_douyin(creator: str) -> str | None:
+    """用 Playwright 走抖音站内搜索拿 sec_uid（搜索 API → 搜索页渲染）。"""
+    from playwright.sync_api import sync_playwright
+
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "_chrome_data")
+
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=data_dir,
+            headless=False,
+            channel="chrome",
+            user_agent=_HEADERS["User-Agent"],
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai",
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-crash-reporter",
+            ],
+        )
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            window.chrome = { runtime: {} };
+        """)
+        page = context.new_page()
+
+        # 先访问首页拿 cookie（ttwid 等），否则搜索接口会被风控
+        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(5000)
+
+        sec_uid = None
+        # 1. 站内搜索 API（page.evaluate，签名由页面 JS 注入）
+        try:
+            sec_uid = _find_sec_uid_by_search_api(page, creator)
+        except Exception as e:
+            print(f"  搜索 API 失败：{e}")
+
+        # 2. 回退：渲染搜索页，从结果卡提取候选
+        if not sec_uid:
+            try:
+                sec_uid = _find_sec_uid_by_search_page(page, creator)
+            except Exception as e:
+                print(f"  搜索页渲染失败：{e}")
+
+        context.close()
+    return sec_uid
+
+
+def _find_sec_uid_by_search_api(page, creator: str) -> str | None:
+    """在页面上下文内调抖音搜索 API，收集候选 sec_uid 并校验昵称。"""
+    resp = page.evaluate(
+        """
+        async (keyword) => {
+            const url = '/aweme/v1/web/general/search/single/?device_platform=webapp'
+                + '&aid=6383&search_channel=aweme_user'
+                + '&keyword=' + encodeURIComponent(keyword)
+                + '&search_source=normal_search&query_correct_type=1'
+                + '&is_filter_search=0&from_page_name=search'
+                + '&offset=0&count=15';
+            const resp = await fetch(url, {credentials: 'include'});
+            const data = await resp.json();
+            const secUids = [];
+            const collect = (obj) => {
+                if (!obj || typeof obj !== 'object') return;
+                if (typeof obj.sec_uid === 'string') secUids.push(obj.sec_uid);
+                if (obj.user_info && typeof obj.user_info.sec_uid === 'string')
+                    secUids.push(obj.user_info.sec_uid);
+                const vals = Array.isArray(obj) ? obj : Object.values(obj);
+                for (const v of vals) collect(v);
+            };
+            collect(data);
+            return { status_code: data.status_code, secUids };
+        }
+        """,
+        creator,
+    )
+    if not resp or resp.get("status_code") != 0:
+        return None
+    return _pick_sec_uid_by_nickname(resp.get("secUids") or [], creator)
+
+
+def _find_sec_uid_by_search_page(page, creator: str) -> str | None:
+    """渲染抖音搜索页(type=user)，从结果卡提取候选 sec_uid 并校验昵称。"""
+    import urllib.parse
+
+    url = f"https://www.douyin.com/search/{urllib.parse.quote(creator)}?type=user"
+    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(5000)
+    # 滚动触发懒加载，多收集几张用户卡
+    page.mouse.wheel(0, 1500)
+    page.wait_for_timeout(2000)
+
+    hrefs = page.eval_on_selector_all(
+        "a[href*='/user/']",
+        "els => els.map(el => el.getAttribute('href')).filter(Boolean)",
+    )
+    sec_uids = []
+    for href in hrefs or []:
+        m = re.search(r"/user/([A-Za-z0-9_\-]{20,})", href)
+        if m:
+            sec_uids.append(m.group(1))
+    return _pick_sec_uid_by_nickname(sec_uids, creator)
+
+
+def _find_sec_uid_via_tavily(creator: str) -> str | None:
+    """Tavily 搜索抖音主页，取候选 sec_uid 并校验昵称（最终回退）。"""
     result = tavily_search(
         query=f"{creator} 抖音 主页",
         search_depth="advanced",
@@ -74,11 +208,12 @@ def find_sec_uid(creator: str) -> str | None:
         country="china",
         language="zh",
     )
+    sec_uids = []
     for item in result.get("results", []):
         m = re.search(r"/user/([A-Za-z0-9_\-]{20,})", item.get("url", ""))
         if m:
-            return m.group(1)
-    return None
+            sec_uids.append(m.group(1))
+    return _pick_sec_uid_by_nickname(sec_uids, creator)
 
 
 def fetch_user_info(sec_uid: str) -> dict:
